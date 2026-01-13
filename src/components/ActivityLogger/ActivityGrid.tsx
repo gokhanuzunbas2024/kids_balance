@@ -9,8 +9,10 @@ interface ActivityGridProps {
 }
 
 export const ActivityGrid: React.FC<ActivityGridProps> = ({ activities, onActivitySelect, onRetryLoad }) => {
-  const favorites = activities.filter(a => a.isFavorite);
-  const others = activities.filter(a => !a.isFavorite);
+  // Filter active activities only
+  const activeActivities = activities.filter(a => a.isActive);
+  const favorites = activeActivities.filter(a => (a as any).isFavorite);
+  const others = activeActivities.filter(a => !(a as any).isFavorite);
 
   const handleRetry = async () => {
     if (onRetryLoad) {
@@ -82,7 +84,7 @@ const ActivityCard: React.FC<ActivityCardProps> = ({ activity, onClick }) => {
       whileTap={{ scale: 0.95 }}
       onClick={onClick}
       className="flex flex-col items-center justify-center p-6 bg-white rounded-2xl shadow-sm border-2 border-gray-100 hover:border-blue-300 hover:shadow-md transition-all"
-      style={{ borderColor: activity.isFavorite ? activity.color : undefined }}
+      style={{ borderColor: (activity as any).isFavorite ? activity.color : undefined }}
     >
       <div className="text-5xl mb-2">{activity.icon}</div>
       <div className="text-sm font-semibold text-gray-800 text-center">

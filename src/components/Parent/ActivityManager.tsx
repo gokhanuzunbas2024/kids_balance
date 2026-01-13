@@ -1,57 +1,70 @@
-import React, { useState } from 'react';
-import { Activity, ActivityCategory, ActivityFormData } from '@/types';
+import React, { useState, useEffect } from 'react';
+import { Activity, ActivityCategory, CreateActivityDTO, UpdateActivityDTO } from '@/types';
 import { useActivityStore } from '@/stores/activityStore';
+import { useAuth } from '@/contexts/AuthContext';
 import { Modal } from '../shared/Modal';
 import { Button } from '../shared/Button';
 import { Trash2, Star, Edit2 } from 'lucide-react';
 
 const CATEGORY_OPTIONS = [
-  { value: ActivityCategory.SCREEN, label: 'Screen', color: '#EF4444' },
-  { value: ActivityCategory.PHYSICAL, label: 'Physical', color: '#10B981' },
-  { value: ActivityCategory.CREATIVE, label: 'Creative', color: '#EC4899' },
-  { value: ActivityCategory.LEARNING, label: 'Learning', color: '#059669' },
-  { value: ActivityCategory.SOCIAL, label: 'Social', color: '#3B82F6' }
+  { value: 'screen', label: 'Screen', color: '#EF4444' },
+  { value: 'physical', label: 'Physical', color: '#10B981' },
+  { value: 'creative', label: 'Creative', color: '#EC4899' },
+  { value: 'educational', label: 'Educational', color: '#059669' },
+  { value: 'social', label: 'Social', color: '#3B82F6' },
+  { value: 'chores', label: 'Chores', color: '#84cc16' },
+  { value: 'rest', label: 'Rest', color: '#a78bfa' },
+  { value: 'other', label: 'Other', color: '#6b7280' },
 ];
 
 const ICON_OPTIONS = ['📺', '🎮', '📚', '🎹', '🏃', '🚴', '🎨', '🧱', '👫', '🎲', '✍️', '🔬', '⚽', '🎯', '🎪', '🎭'];
 
 export const ActivityManager: React.FC = () => {
-  const { activities, createActivity, updateActivity, deleteActivity, toggleFavorite, loadActivities } = useActivityStore();
+  const { user } = useAuth();
+  const { activities, createActivity, updateActivity, deleteActivity, fetchActivities } = useActivityStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingActivity, setEditingActivity] = useState<Activity | null>(null);
-  const [formData, setFormData] = useState<ActivityFormData>({
+  const [formData, setFormData] = useState<Omit<CreateActivityDTO, 'familyId' | 'createdBy'>>({
     name: '',
-    category: ActivityCategory.SCREEN,
+    category: 'screen',
     icon: '📺',
     color: '#3B82F6',
     coefficient: 3.0,
-    suggestedDurations: [15, 30, 60],
-    createdBy: 'parent'
   });
 
-  React.useEffect(() => {
-    loadActivities();
-  }, [loadActivities]);
+  useEffect(() => {
+    if (user?.familyId) {
+      fetchActivities(user.familyId);
+    }
+  }, [user?.familyId, fetchActivities]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user?.familyId || !user?.id) return;
+    
     try {
       if (editingActivity) {
         await updateActivity(editingActivity.id, formData);
       } else {
-        await createActivity(formData);
+        await createActivity({
+          ...formData,
+          familyId: user.familyId,
+          createdBy: user.id,
+        });
       }
       setIsModalOpen(false);
       setEditingActivity(null);
       setFormData({
         name: '',
-        category: ActivityCategory.SCREEN,
+        category: 'screen',
         icon: '📺',
         color: '#3B82F6',
         coefficient: 3.0,
-        suggestedDurations: [15, 30, 60],
-        createdBy: 'parent'
       });
+      // Reload activities
+      if (user.familyId) {
+        await fetchActivities(user.familyId);
+      }
     } catch (error) {
       console.error('Error saving activity:', error);
     }
@@ -65,8 +78,6 @@ export const ActivityManager: React.FC = () => {
       icon: activity.icon,
       color: activity.color,
       coefficient: activity.coefficient,
-      suggestedDurations: activity.suggestedDurations,
-      createdBy: activity.createdBy
     });
     setIsModalOpen(true);
   };
@@ -100,20 +111,12 @@ export const ActivityManager: React.FC = () => {
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => toggleFavorite(activity.id)}
-                  className={`p-2 rounded-lg transition-colors ${
-                    activity.isFavorite ? 'text-yellow-500' : 'text-gray-400'
-                  }`}
-                >
-                  <Star size={20} fill={activity.isFavorite ? 'currentColor' : 'none'} />
-                </button>
-                <button
                   onClick={() => handleEdit(activity)}
                   className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                 >
                   <Edit2 size={20} />
                 </button>
-                {!activity.isPreset && (
+                {!activity.isDefault && (
                   <button
                     onClick={() => handleDelete(activity.id)}
                     className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
@@ -123,7 +126,7 @@ export const ActivityManager: React.FC = () => {
                 )}
               </div>
             </div>
-            <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between">
               <div className="flex gap-1">
                 {Array.from({ length: Math.floor(activity.coefficient) }).map((_, i) => (
                   <span key={i} className="text-yellow-400">⭐</span>
@@ -136,6 +139,9 @@ export const ActivityManager: React.FC = () => {
                 {activity.coefficient.toFixed(1)}x
               </div>
             </div>
+            {!activity.isActive && (
+              <div className="mt-2 text-xs text-gray-500 italic">Archived</div>
+            )}
           </div>
         ))}
       </div>
@@ -220,22 +226,6 @@ export const ActivityManager: React.FC = () => {
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-semibold mb-2">Suggested Durations (minutes)</label>
-            <input
-              type="text"
-              value={formData.suggestedDurations.join(', ')}
-              onChange={(e) => {
-                const durations = e.target.value
-                  .split(',')
-                  .map(s => parseInt(s.trim()))
-                  .filter(n => !isNaN(n) && n > 0);
-                setFormData({ ...formData, suggestedDurations: durations });
-              }}
-              placeholder="15, 30, 60"
-              className="w-full px-4 py-2 border rounded-lg"
-            />
-          </div>
 
           <div className="flex gap-3 pt-4">
             <Button

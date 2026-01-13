@@ -1,100 +1,104 @@
 import { create } from 'zustand';
-import { Activity, ActivityFormData } from '@/types';
-import { db } from '@/db/schema';
+import { v4 as uuidv4 } from 'uuid';
+import { Activity, CreateActivityDTO, UpdateActivityDTO, ActivityCategory } from '@/types';
+import { FirebaseActivityRepository } from '@/repositories/firebase/ActivityRepository';
 
 interface ActivityStore {
   activities: Activity[];
   isLoading: boolean;
-  loadActivities: () => Promise<void>;
-  forceSeedActivities: () => Promise<void>;
-  createActivity: (data: ActivityFormData) => Promise<Activity>;
-  updateActivity: (id: string, data: Partial<Activity>) => Promise<void>;
+  error: string | null;
+  selectedCategory: ActivityCategory | 'all';
+  fetchActivities: (familyId: string) => Promise<void>;
+  createActivity: (data: CreateActivityDTO) => Promise<Activity>;
+  updateActivity: (id: string, data: UpdateActivityDTO) => Promise<void>;
   deleteActivity: (id: string) => Promise<void>;
-  toggleFavorite: (id: string) => Promise<void>;
+  setSelectedCategory: (category: ActivityCategory | 'all') => void;
+  getActiveActivities: () => Activity[];
+  getByCategory: (category: ActivityCategory) => Activity[];
+  seedDefaults: (familyId: string, createdBy: string) => Promise<void>;
 }
+
+const repository = new FirebaseActivityRepository();
 
 export const useActivityStore = create<ActivityStore>((set, get) => ({
   activities: [],
   isLoading: false,
+  error: null,
+  selectedCategory: 'all',
 
-  loadActivities: async () => {
-    set({ isLoading: true });
+  fetchActivities: async (familyId: string) => {
+    set({ isLoading: true, error: null });
     try {
-      const allActivities = await db.activities.toArray();
-      const activeActivities = allActivities.filter(a => !a.isArchived);
-      
-      console.log(`✅ Loaded ${activeActivities.length} activities`);
-      
-      set({ activities: activeActivities, isLoading: false });
+      const activities = await repository.getActiveByFamilyId(familyId);
+      set({ activities, isLoading: false });
     } catch (error) {
-      console.error('❌ Error loading activities:', error);
-      set({ activities: [], isLoading: false });
+      console.error('Error fetching activities:', error);
+      set({ 
+        error: (error as Error).message, 
+        isLoading: false 
+      });
     }
   },
 
-  forceSeedActivities: async () => {
+  seedDefaults: async (familyId: string, createdBy: string) => {
     try {
-      console.log('🔄 Force seeding activities...');
-      // Clear existing preset activities first
-      const allActivities = await db.activities.toArray();
-      const existingPresets = allActivities.filter(a => a.isPreset);
-      if (existingPresets.length > 0) {
-        console.log(`🗑️  Clearing ${existingPresets.length} existing preset activities...`);
-        await db.activities.bulkDelete(existingPresets.map(a => a.id));
-      }
-      
-      // Seed fresh activities
-      const { seedDatabase } = await import('@/db/seedData');
-      await seedDatabase();
-      
-      // Reload activities
-      await get().loadActivities();
-      console.log('✅ Force seed completed');
+      await repository.seedDefaults(familyId, createdBy);
+      // Reload activities after seeding
+      await get().fetchActivities(familyId);
     } catch (error) {
-      console.error('❌ Error force seeding activities:', error);
+      console.error('Error seeding defaults:', error);
       throw error;
     }
   },
 
-  createActivity: async (data) => {
-    const activity: Activity = {
-      ...data,
-      id: crypto.randomUUID(),
-      createdAt: new Date(),
-      isFavorite: false,
-      isPreset: false,
-      isArchived: false
-    };
-    await db.activities.add(activity);
-    set(state => ({ activities: [...state.activities, activity] }));
-    return activity;
+  createActivity: async (data: CreateActivityDTO) => {
+    const id = uuidv4();
+    try {
+      const activity = await repository.create({ ...data, id });
+      set(state => ({ activities: [...state.activities, activity] }));
+      return activity;
+    } catch (error) {
+      console.error('Error creating activity:', error);
+      throw error;
+    }
   },
 
-  updateActivity: async (id, data) => {
-    await db.activities.update(id, data);
-    set(state => ({
-      activities: state.activities.map(a =>
-        a.id === id ? { ...a, ...data } : a
-      )
-    }));
-  },
-
-  deleteActivity: async (id) => {
-    await db.activities.update(id, { isArchived: true });
-    set(state => ({
-      activities: state.activities.filter(a => a.id !== id)
-    }));
-  },
-
-  toggleFavorite: async (id) => {
-    const activity = get().activities.find(a => a.id === id);
-    if (activity) {
-      await db.activities.update(id, { isFavorite: !activity.isFavorite });
+  updateActivity: async (id: string, data: UpdateActivityDTO) => {
+    try {
+      const updated = await repository.update(id, data);
       set(state => ({
         activities: state.activities.map(a =>
-          a.id === id ? { ...a, isFavorite: !a.isFavorite } : a
+          a.id === id ? updated : a
         )
       }));
+    } catch (error) {
+      console.error('Error updating activity:', error);
+      throw error;
     }
-  }
+  },
+
+  deleteActivity: async (id: string) => {
+    try {
+      await repository.delete(id);
+      set(state => ({
+        activities: state.activities.filter(a => a.id !== id)
+      }));
+    } catch (error) {
+      console.error('Error deleting activity:', error);
+      throw error;
+    }
+  },
+
+  setSelectedCategory: (category) =>
+    set({ selectedCategory: category }),
+
+  getActiveActivities: () => {
+    return get().activities.filter(a => a.isActive);
+  },
+
+  getByCategory: (category: ActivityCategory) => {
+    return get().activities.filter(
+      (a) => a.isActive && a.category === category
+    );
+  },
 }));

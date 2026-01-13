@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ActivityLog } from '@/types';
 import { useLogsStore } from '@/stores/logsStore';
+import { useAuth } from '@/contexts/AuthContext';
+import { useActivityStore } from '@/stores/activityStore';
 import { Modal } from '../shared/Modal';
 import { Button } from '../shared/Button';
 import { Trash2 } from 'lucide-react';
@@ -12,9 +14,15 @@ interface EditLogModalProps {
 }
 
 export const EditLogModal: React.FC<EditLogModalProps> = ({ log, isOpen, onClose }) => {
+  const { user } = useAuth();
   const { updateLog, deleteLog, loadTodayLogs } = useLogsStore();
-  const [selectedDuration, setSelectedDuration] = useState<number>(log.duration);
+  const { activities } = useActivityStore();
+  const [selectedDuration, setSelectedDuration] = useState<number>(log.durationMinutes);
   const [isDeleting, setIsDeleting] = useState(false);
+  
+  // Get the activity to find the coefficient
+  const activity = activities.find(a => a.id === log.activityId);
+  const coefficient = activity?.coefficient || (log.durationMinutes > 0 ? log.qualityScore / log.durationMinutes : 1.0);
 
   // Generate duration options based on activity's suggested durations or common values
   const durationOptions = [15, 30, 45, 60, 90, 120, 180];
@@ -32,9 +40,10 @@ export const EditLogModal: React.FC<EditLogModalProps> = ({ log, isOpen, onClose
   };
 
   const handleSave = async () => {
+    if (!user?.id) return;
     try {
-      await updateLog(log.id, { duration: selectedDuration });
-      await loadTodayLogs();
+      await updateLog(log.id, { durationMinutes: selectedDuration });
+      await loadTodayLogs(user.id);
       onClose();
     } catch (error) {
       console.error('Error updating log:', error);
@@ -42,13 +51,14 @@ export const EditLogModal: React.FC<EditLogModalProps> = ({ log, isOpen, onClose
   };
 
   const handleDelete = async () => {
+    if (!user?.id) return;
     if (!confirm('Are you sure you want to delete this activity log?')) {
       return;
     }
     setIsDeleting(true);
     try {
       await deleteLog(log.id);
-      await loadTodayLogs();
+      await loadTodayLogs(user.id);
       onClose();
     } catch (error) {
       console.error('Error deleting log:', error);
@@ -98,12 +108,12 @@ export const EditLogModal: React.FC<EditLogModalProps> = ({ log, isOpen, onClose
         </div>
 
         <div className="bg-blue-50 rounded-lg p-4 text-center">
-          <div className="text-sm text-gray-600 mb-1">Quality Points</div>
+          <div className="text-sm text-gray-600 mb-1">Quality Score</div>
           <div className="text-2xl font-bold" style={{ color: log.activityColor }}>
-            {(selectedDuration * log.activityCoefficient).toFixed(0)} pts
+            {Math.round(selectedDuration * coefficient).toFixed(0)} pts
           </div>
           <div className="text-xs text-gray-500 mt-1">
-            {selectedDuration} min × {log.activityCoefficient.toFixed(1)} quality
+            {selectedDuration} min × {coefficient.toFixed(1)} quality
           </div>
         </div>
 
@@ -129,7 +139,7 @@ export const EditLogModal: React.FC<EditLogModalProps> = ({ log, isOpen, onClose
           <Button
             type="button"
             onClick={handleSave}
-            disabled={selectedDuration === log.duration}
+            disabled={selectedDuration === log.durationMinutes}
             className="flex-1"
             style={
               selectedDuration !== log.duration

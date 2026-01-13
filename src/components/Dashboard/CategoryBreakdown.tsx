@@ -7,19 +7,25 @@ interface CategoryBreakdownProps {
 }
 
 const CATEGORY_COLORS: Record<ActivityCategory, string> = {
-  [ActivityCategory.SCREEN]: '#EF4444',
-  [ActivityCategory.PHYSICAL]: '#10B981',
-  [ActivityCategory.CREATIVE]: '#EC4899',
-  [ActivityCategory.LEARNING]: '#059669',
-  [ActivityCategory.SOCIAL]: '#3B82F6'
+  'screen': '#64748b',
+  'physical': '#22c55e',
+  'creative': '#f59e0b',
+  'educational': '#3b82f6',
+  'social': '#ec4899',
+  'chores': '#84cc16',
+  'rest': '#a78bfa',
+  'other': '#6b7280'
 };
 
 const CATEGORY_LABELS: Record<ActivityCategory, string> = {
-  [ActivityCategory.SCREEN]: 'Screen',
-  [ActivityCategory.PHYSICAL]: 'Physical',
-  [ActivityCategory.CREATIVE]: 'Creative',
-  [ActivityCategory.LEARNING]: 'Learning',
-  [ActivityCategory.SOCIAL]: 'Social'
+  'screen': 'Screen',
+  'physical': 'Physical',
+  'creative': 'Creative',
+  'educational': 'Educational',
+  'social': 'Social',
+  'chores': 'Chores',
+  'rest': 'Rest',
+  'other': 'Other'
 };
 
 export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({ stats }) => {

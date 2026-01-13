@@ -15,9 +15,8 @@ export const TimeInputSelector: React.FC<TimeInputSelectorProps> = ({
   onCancel
 }) => {
   const [selectedDuration, setSelectedDuration] = useState<number | null>(null);
-  const presets = activity.suggestedDurations.length > 0
-    ? activity.suggestedDurations
-    : [15, 30, 60, 120];
+  // Use default presets since new Activity type doesn't have suggestedDurations
+  const presets = [15, 30, 60, 120];
 
   const formatDuration = (minutes: number): string => {
     if (minutes < 60) {

@@ -1,49 +1,54 @@
 import React, { useState } from 'react';
-import { ActivityCategory, ActivityFormData } from '@/types';
+import { ActivityCategory, CreateActivityDTO } from '@/types';
 import { useActivityStore } from '@/stores/activityStore';
+import { useAuth } from '@/contexts/AuthContext';
 import { Modal } from '../shared/Modal';
 import { Button } from '../shared/Button';
 import { Plus } from 'lucide-react';
 
 const CATEGORY_OPTIONS = [
-  { value: ActivityCategory.SCREEN, label: 'Screen', emoji: '📺', color: '#EF4444' },
-  { value: ActivityCategory.PHYSICAL, label: 'Physical', emoji: '🏃', color: '#10B981' },
-  { value: ActivityCategory.CREATIVE, label: 'Creative', emoji: '🎨', color: '#EC4899' },
-  { value: ActivityCategory.LEARNING, label: 'Learning', emoji: '📚', color: '#059669' },
-  { value: ActivityCategory.SOCIAL, label: 'Social', emoji: '👫', color: '#3B82F6' }
+  { value: 'screen' as ActivityCategory, label: 'Screen', emoji: '📺', color: '#64748b' },
+  { value: 'physical' as ActivityCategory, label: 'Physical', emoji: '🏃', color: '#22c55e' },
+  { value: 'creative' as ActivityCategory, label: 'Creative', emoji: '🎨', color: '#f59e0b' },
+  { value: 'educational' as ActivityCategory, label: 'Educational', emoji: '📚', color: '#3b82f6' },
+  { value: 'social' as ActivityCategory, label: 'Social', emoji: '👫', color: '#ec4899' },
+  { value: 'chores' as ActivityCategory, label: 'Chores', emoji: '🧹', color: '#84cc16' },
+  { value: 'rest' as ActivityCategory, label: 'Rest', emoji: '😴', color: '#a78bfa' },
+  { value: 'other' as ActivityCategory, label: 'Other', emoji: '📌', color: '#6b7280' },
 ];
 
 const ICON_OPTIONS = ['📺', '🎮', '📚', '🎹', '🏃', '🚴', '🎨', '🧱', '👫', '🎲', '✍️', '🔬', '⚽', '🎯', '🎪', '🎭', '🎵', '🎬', '🧩', '🎪', '🏀', '⚾', '🎾', '🏊', '🧘', '🎤', '🎸', '🎺', '🥁', '🎻'];
 
 export const AddActivityButton: React.FC = () => {
+  const { user } = useAuth();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { createActivity, loadActivities } = useActivityStore();
-  const [formData, setFormData] = useState<ActivityFormData>({
+  const { createActivity, fetchActivities } = useActivityStore();
+  const [formData, setFormData] = useState<Omit<CreateActivityDTO, 'familyId' | 'createdBy'>>({
     name: '',
-    category: ActivityCategory.CREATIVE,
+    category: 'creative',
     icon: '🎨',
-    color: '#EC4899',
+    color: '#f59e0b',
     coefficient: 3.0,
-    suggestedDurations: [15, 30, 60],
-    createdBy: 'child'
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name.trim()) return;
+    if (!formData.name.trim() || !user?.familyId) return;
 
     try {
-      await createActivity(formData);
-      await loadActivities(); // Reload to show new activity
+      await createActivity({
+        ...formData,
+        familyId: user.familyId,
+        createdBy: user.id,
+      });
+      await fetchActivities(user.familyId); // Reload to show new activity
       setIsModalOpen(false);
       setFormData({
         name: '',
-        category: ActivityCategory.CREATIVE,
+        category: 'creative',
         icon: '🎨',
-        color: '#EC4899',
+        color: '#f59e0b',
         coefficient: 3.0,
-        suggestedDurations: [15, 30, 60],
-        createdBy: 'child'
       });
     } catch (error) {
       console.error('Error creating activity:', error);

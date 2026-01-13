@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useStatsStore } from '@/stores/statsStore';
 import { useLogsStore } from '@/stores/logsStore';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { useAuth } from '@/contexts/AuthContext';
 import { QualityMeter } from './QualityMeter';
 import { CategoryBreakdown } from './CategoryBreakdown';
 import { EditLogModal } from './EditLogModal';
@@ -11,15 +11,17 @@ import { getBadgeById } from '@/utils/badgeEngine';
 import { format } from 'date-fns';
 
 export const BalanceDashboard: React.FC = () => {
+  const { user } = useAuth();
   const { todayStats, loadTodayStats, isLoading } = useStatsStore();
   const { logs, loadTodayLogs } = useLogsStore();
-  const { settings } = useSettingsStore();
   const [editingLog, setEditingLog] = useState<ActivityLog | null>(null);
 
   useEffect(() => {
-    loadTodayLogs();
-    loadTodayStats();
-  }, [loadTodayLogs, loadTodayStats]);
+    if (user?.id) {
+      loadTodayLogs(user.id);
+      loadTodayStats(user.id);
+    }
+  }, [user?.id, loadTodayLogs, loadTodayStats]);
 
   if (isLoading) {
     return (
@@ -34,7 +36,7 @@ export const BalanceDashboard: React.FC = () => {
       <div className="min-h-screen bg-gray-50 p-4">
         <div className="max-w-2xl mx-auto">
           <h1 className="text-3xl font-bold mb-2 mt-4">
-            {settings?.childName ? `${settings.childName}'s Balance` : "Today's Balance"}
+            {user?.displayName ? `${user.displayName}'s Balance` : "Today's Balance"}
           </h1>
           <p className="text-gray-600 mb-6">{format(new Date(), 'EEEE, MMMM d')}</p>
           <div className="bg-white rounded-2xl p-8 shadow-sm text-center">
@@ -58,7 +60,7 @@ export const BalanceDashboard: React.FC = () => {
     <div className="min-h-screen bg-gray-50 p-4 pb-8">
       <div className="max-w-2xl mx-auto">
         <h1 className="text-3xl font-bold mb-2 mt-4">
-          {settings?.childName ? `${settings.childName}'s Balance` : "Today's Balance"}
+          {user?.displayName ? `${user.displayName}'s Balance` : "Today's Balance"}
         </h1>
         <p className="text-gray-600 mb-6">{format(new Date(), 'EEEE, MMMM d')}</p>
 
@@ -154,21 +156,24 @@ const ActivityLogItem: React.FC<ActivityLogItemProps> = ({ log, onEdit }) => {
     return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
   };
 
+  // Calculate coefficient from qualityScore and durationMinutes
+  const coefficient = log.durationMinutes > 0 ? log.qualityScore / log.durationMinutes : 0;
+
   return (
     <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
       <div className="text-3xl">{log.activityIcon}</div>
       <div className="flex-1">
         <div className="font-semibold">{log.activityName}</div>
         <div className="text-sm text-gray-600">
-          {formatDuration(log.duration)} • {log.activityCategory}
+          {formatDuration(log.durationMinutes)} • {log.activityCategory}
         </div>
       </div>
       <div className="text-right">
         <div className="font-bold text-sm" style={{ color: log.activityColor }}>
-          {log.qualityPoints.toFixed(0)} pts
+          {Math.round(log.qualityScore).toFixed(0)} pts
         </div>
         <div className="text-xs text-gray-500">
-          {Array.from({ length: Math.floor(log.activityCoefficient) }).map((_, i) => (
+          {Array.from({ length: Math.floor(coefficient) }).map((_, i) => (
             <span key={i}>⭐</span>
           ))}
         </div>

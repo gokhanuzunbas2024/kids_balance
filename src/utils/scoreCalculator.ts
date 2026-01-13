@@ -2,7 +2,7 @@ import { ActivityLog, BalanceScore } from '@/types';
 import { ActivityCategory } from '@/types';
 
 export function calculateBalanceScore(logs: ActivityLog[]): BalanceScore {
-  const totalMinutes = logs.reduce((sum, log) => sum + log.duration, 0);
+  const totalMinutes = logs.reduce((sum, log) => sum + log.durationMinutes, 0);
   
   if (totalMinutes === 0) {
     return { diversityScore: 0, qualityScore: 0, varietyScore: 0, totalScore: 0 };
@@ -10,16 +10,19 @@ export function calculateBalanceScore(logs: ActivityLog[]): BalanceScore {
 
   // 1. Diversity Score (0-30): Penalizes if one category dominates
   const categoryMinutes: Record<ActivityCategory, number> = {
-    [ActivityCategory.SCREEN]: 0,
-    [ActivityCategory.PHYSICAL]: 0,
-    [ActivityCategory.CREATIVE]: 0,
-    [ActivityCategory.LEARNING]: 0,
-    [ActivityCategory.SOCIAL]: 0
+    'screen': 0,
+    'physical': 0,
+    'creative': 0,
+    'educational': 0,
+    'social': 0,
+    'chores': 0,
+    'rest': 0,
+    'other': 0
   };
 
   logs.forEach(log => {
     categoryMinutes[log.activityCategory] = 
-      (categoryMinutes[log.activityCategory] || 0) + log.duration;
+      (categoryMinutes[log.activityCategory] || 0) + log.durationMinutes;
   });
   
   const maxCategoryPercentage = Math.max(
@@ -32,7 +35,7 @@ export function calculateBalanceScore(logs: ActivityLog[]): BalanceScore {
 
   // 2. Quality Score (0-50): Based on quality-weighted average
   const totalQualityPoints = logs.reduce(
-    (sum, log) => sum + log.qualityPoints, 0
+    (sum, log) => sum + log.qualityScore, 0
   );
   const averageQuality = totalQualityPoints / totalMinutes;
   const qualityScore = (averageQuality / 5.0) * 50;

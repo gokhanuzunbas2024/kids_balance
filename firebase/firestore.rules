@@ -1,0 +1,333 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============ Helper Functions ============
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Get the current user's document (returns null if doesn't exist)
+    function getUserData() {
+      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return userDoc.data;
+    }
+    
+    // Get user's familyId safely
+    function getUserFamilyId() {
+      return isAuthenticated() && userExists() ? getUserData().familyId : null;
+    }
+    
+    // Check if user document exists
+    function userExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    
+    // Check if user is a parent in their family
+    function isParent() {
+      return isAuthenticated() && userExists() && getUserData().role == 'parent';
+    }
+    
+    // Check if user is a child in their family
+    function isChild() {
+      return isAuthenticated() && userExists() && getUserData().role == 'child';
+    }
+    
+    // Check if user belongs to a specific family
+    function belongsToFamily(familyId) {
+      return isAuthenticated() && userExists() && getUserData().familyId == familyId;
+    }
+    
+    // Check if user is the owner of the family
+    function isFamilyOwner(familyId) {
+      let family = get(/databases/$(database)/documents/families/$(familyId)).data;
+      return isAuthenticated() && family.ownerId == request.auth.uid;
+    }
+    
+    // Check if user is a parent in the specified family
+    function isParentInFamily(familyId) {
+      return belongsToFamily(familyId) && isParent();
+    }
+    
+    // Validate timestamp is server time
+    function isValidTimestamp(field) {
+      return request.resource.data[field] == request.time;
+    }
+    
+    // Check if only allowed fields are being updated
+    function onlyUpdates(allowedFields) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedFields);
+    }
+    
+    // Helper to check if a userId belongs to a child user
+    function isChildUserId(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId)) &&
+        get(/databases/$(database)/documents/users/$(userId)).data.role == 'child';
+    }
+    
+    // Helper to check if a userId belongs to a child in the parent's family
+    function isChildInParentFamily(userId) {
+      return isParent() &&
+        userExists() &&
+        exists(/databases/$(database)/documents/users/$(userId)) &&
+        get(/databases/$(database)/documents/users/$(userId)).data.role == 'child' &&
+        get(/databases/$(database)/documents/users/$(userId)).data.familyId == getUserFamilyId();
+    }
+    
+    // ============ Users Collection ============
+    
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Users can read profiles of family members (if user document exists)
+      allow read: if isAuthenticated() && 
+        userExists() &&
+        resource.data.familyId == getUserData().familyId;
+      
+      // Allow reading child profiles by familyId for child login (unauthenticated)
+      // This allows children to see available profiles before PIN entry
+      // Note: PIN field will be accessible but should be hashed, so it's safe
+      allow read: if !isAuthenticated() &&
+        resource.data.role == 'child';
+      
+      // Users can create their own profile during registration or recovery
+      allow create: if isAuthenticated() && 
+        request.auth.uid == userId &&
+        request.resource.data.keys().hasAll(['email', 'displayName', 'role', 'familyId', 'createdAt']) &&
+        request.resource.data.role in ['parent', 'child'];
+      
+      // Parents can create child user documents in their family
+      allow create: if isParent() &&
+        request.resource.data.role == 'child' &&
+        request.resource.data.familyId == getUserData().familyId &&
+        request.resource.data.keys().hasAll(['displayName', 'role', 'familyId', 'createdAt']) &&
+        (request.resource.data.email == null || request.resource.data.email == '');
+      
+      // Users can update their own profile (limited fields)
+      allow update: if isAuthenticated() && 
+        request.auth.uid == userId &&
+        onlyUpdates(['displayName', 'avatarUrl', 'settings', 'updatedAt', 'lastLoginAt']);
+      
+      // Allow unauthenticated updates to lastLoginAt for child documents (PIN login)
+      // PIN is verified in application code before this update happens
+      allow update: if !isAuthenticated() &&
+        resource.data.role == 'child' &&
+        onlyUpdates(['lastLoginAt']);
+      
+      // Parents can update child profiles in their family
+      allow update: if isParent() &&
+        resource.data.familyId == getUserData().familyId &&
+        resource.data.role == 'child';
+      
+      // Only parents can delete child accounts in their family
+      allow delete: if isParent() &&
+        resource.data.familyId == getUserData().familyId &&
+        resource.data.role == 'child';
+    }
+    
+    // ============ Families Collection ============
+    
+    match /families/{familyId} {
+      // Family members can read their family
+      allow read: if belongsToFamily(familyId);
+      
+      // Allow querying families by ownerId (for login recovery)
+      allow read: if isAuthenticated() && 
+        resource.data.ownerId == request.auth.uid;
+      
+      // Allow reading family document by inviteCode (for child login - unauthenticated)
+      // This allows children to find their family before logging in
+      // Only expose basic family info (name, inviteCode, memberIds) - not sensitive data
+      // Note: Queries filter by inviteCode, so only matching families are returned
+      allow read: if !isAuthenticated() && resource.data.inviteCode != null;
+      
+      // Anyone authenticated can create a family (becomes owner)
+      allow create: if isAuthenticated() &&
+        request.resource.data.ownerId == request.auth.uid &&
+        request.resource.data.keys().hasAll(['name', 'ownerId', 'memberIds', 'inviteCode', 'createdAt']);
+      
+      // Only family owner or parents can update
+      // Allow updating memberIds when adding children
+      allow update: if isFamilyOwner(familyId) || 
+        (isParent() && getUserData().familyId == familyId);
+      
+      // Only owner can delete family
+      allow delete: if isFamilyOwner(familyId);
+    }
+    
+    // ============ Activities Collection ============
+    
+    match /activities/{activityId} {
+      // Family members can read activities (authenticated users)
+      allow read: if belongsToFamily(resource.data.familyId);
+      
+      // Allow unauthenticated reads for activities (needed for children to create logs)
+      // Activities are family-specific, so this is relatively safe
+      allow read: if !isAuthenticated() && resource.data.familyId != null;
+      
+      // Parents can create activities for their family
+      allow create: if isParent() &&
+        request.resource.data.familyId == getUserData().familyId &&
+        request.resource.data.createdBy == request.auth.uid;
+      
+      // Parents can update activities in their family
+      allow update: if isParentInFamily(resource.data.familyId);
+      
+      // Parents can delete non-default activities in their family
+      allow delete: if isParentInFamily(resource.data.familyId) &&
+        resource.data.isDefault == false;
+    }
+    
+    // ============ Activity Logs Collection ============
+    
+    match /activityLogs/{logId} {
+      // Parents can read logs for children in their family (check this first for parent queries)
+      // This allows parents to query by child userId
+      allow read: if isParent() &&
+        userExists() &&
+        resource.data.userId != null &&
+        isChildInParentFamily(resource.data.userId);
+      
+      // Parents can also read logs by familyId match (for queries by familyId)
+      allow read: if isParent() &&
+        userExists() &&
+        resource.data.familyId != null &&
+        getUserFamilyId() != null &&
+        resource.data.familyId == getUserFamilyId();
+      
+      // Users can read their own logs (for parents with Firebase Auth)
+      allow read: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid;
+      
+      // Children can read their own logs (PIN-based auth - less secure but necessary)
+      // Allow reads where userId belongs to a child user
+      allow read: if !isAuthenticated() &&
+        resource.data.userId != null &&
+        isChildUserId(resource.data.userId);
+      
+      // Users can create logs for themselves (parents with Firebase Auth)
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.familyId == getUserData().familyId &&
+        request.resource.data.keys().hasAll(['activityId', 'userId', 'familyId', 'durationMinutes', 'createdAt']);
+      
+      // Children can create logs for themselves (PIN-based auth)
+      // Verify the userId belongs to a child user and familyId matches
+      // Note: We verify userId is a child by checking the user document
+      allow create: if !isAuthenticated() &&
+        request.resource.data.userId != null &&
+        request.resource.data.familyId != null &&
+        request.resource.data.activityId != null &&
+        request.resource.data.durationMinutes != null &&
+        'createdAt' in request.resource.data &&
+        exists(/databases/$(database)/documents/users/$(request.resource.data.userId)) &&
+        get(/databases/$(database)/documents/users/$(request.resource.data.userId)).data.role == 'child' &&
+        get(/databases/$(database)/documents/users/$(request.resource.data.userId)).data.familyId == request.resource.data.familyId;
+      
+      // Users can update their own logs (within 24 hours)
+      allow update: if isAuthenticated() &&
+        resource.data.userId == request.auth.uid &&
+        resource.data.createdAt > (request.time - duration.value(24, 'h'));
+      
+      // Parents can update any log in their family
+      allow update: if isParentInFamily(resource.data.familyId);
+      
+      // Users can delete their own logs (within 1 hour) - for parents with Firebase Auth
+      allow delete: if isAuthenticated() &&
+        resource.data.userId == request.auth.uid &&
+        resource.data.createdAt > (request.time - duration.value(1, 'h'));
+      
+      // Children can delete their own logs (PIN-based auth)
+      // Allow deletion where userId belongs to a child user
+      allow delete: if !isAuthenticated() &&
+        resource.data.userId != null &&
+        isChildUserId(resource.data.userId);
+      
+      // Parents can delete any log in their family
+      allow delete: if isParentInFamily(resource.data.familyId);
+    }
+    
+    // ============ Daily Summaries Collection ============
+    
+    match /dailySummaries/{summaryId} {
+      // Parents can read summaries for children in their family (check this first for parent queries)
+      // This allows parents to query by child userId
+      allow read: if isParent() &&
+        userExists() &&
+        resource.data.userId != null &&
+        isChildInParentFamily(resource.data.userId);
+      
+      // Parents can also read summaries by familyId match (for queries by familyId)
+      allow read: if isParent() &&
+        userExists() &&
+        resource.data.familyId != null &&
+        getUserFamilyId() != null &&
+        resource.data.familyId == getUserFamilyId();
+      
+      // Users can read their own summaries (for parents with Firebase Auth)
+      allow read: if isAuthenticated() &&
+        resource.data.userId == request.auth.uid;
+      
+      // Children can read their own summaries (PIN-based auth - less secure but necessary)
+      // Allow reads where userId belongs to a child user
+      allow read: if !isAuthenticated() &&
+        resource.data.userId != null &&
+        isChildUserId(resource.data.userId);
+      
+      // System-generated only (via Cloud Functions)
+      // Or allow users to create/update their own
+      allow create, update: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.familyId == getUserData().familyId;
+      
+      // Children can create/update their own summaries (PIN-based auth)
+      allow create, update: if !isAuthenticated() &&
+        request.resource.data.userId != null &&
+        request.resource.data.familyId != null &&
+        isChildUserId(request.resource.data.userId);
+      
+      // No deletion allowed
+      allow delete: if false;
+    }
+    
+    // ============ Invites Collection ============
+    
+    match /invites/{inviteId} {
+      // Anyone can read an invite by ID (for joining)
+      allow read: if isAuthenticated();
+      
+      // Parents can create invites for their family
+      allow create: if isParent() &&
+        request.resource.data.familyId == getUserData().familyId &&
+        request.resource.data.createdBy == request.auth.uid;
+      
+      // Update status when accepting
+      allow update: if isAuthenticated() &&
+        resource.data.email == request.auth.token.email &&
+        resource.data.status == 'pending' &&
+        request.resource.data.status == 'accepted';
+      
+      // Parents can delete pending invites in their family
+      allow delete: if isParentInFamily(resource.data.familyId) &&
+        resource.data.status == 'pending';
+    }
+    
+    // ============ Sessions Collection (for child PIN auth) ============
+    
+    match /sessions/{sessionId} {
+      // Users can read their own sessions
+      allow read: if isAuthenticated() &&
+        (request.auth.uid == sessionId || resource.data.userId == request.auth.uid);
+      
+      // Anyone can create a session (for future use)
+      allow create: if true;
+      
+      // Users can delete their own sessions (logout)
+      allow delete: if isAuthenticated() &&
+        request.auth.uid == sessionId;
+    }
+  }
+}
